@@ -54,7 +54,7 @@ Flags:
 			log.Fatalf("error reading file: %w", err)
 		}
 
-		err = yaml.Unmarshal(data, srv)
+		err = yaml.Unmarshal(data, &srv)
 		if err != nil {
 			log.Fatalf("error decoding config file: %w", err)
 		}
@@ -64,9 +64,9 @@ Flags:
 	}
 
 	log.Printf("[*] Starting SSH-to-SOCKS5 tunnel server")
-	log.Printf("[*] Listening on port      : %s", *port)
-	log.Printf("[*] Upstream SOCKS5 proxy  : %s", *proxy)
-	log.Printf("[*] Allowed user           : %s", *user)
+	log.Printf("[*] Listening on port      : %s", srv.ListenPort)
+	log.Printf("[*] Upstream SOCKS5 proxy  : %s", srv.Socks5Address)
+	log.Printf("[*] Allowed user           : %s", srv.Username)
 
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("[!] Server error: %v", err)
