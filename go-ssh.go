@@ -6,214 +6,14 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
-	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
-
-// LogLevel represents logging verbosity level.
-type LogLevel int
-
-const (
-	LogLevelSilent LogLevel = iota
-	LogLevelError
-	LogLevelWarn
-	LogLevelInfo
-	LogLevelDebug
-)
-
-// Logger wraps standard log with level filtering.
-type Logger struct {
-	level LogLevel
-}
-
-var logger *Logger
-
-// InitLogger initializes the global logger with specified level.
-func InitLogger(level string) {
-	var logLevel LogLevel
-	switch strings.ToLower(level) {
-	case "debug":
-		logLevel = LogLevelDebug
-	case "info":
-		logLevel = LogLevelInfo
-	case "warn", "warning":
-		logLevel = LogLevelWarn
-	case "error":
-		logLevel = LogLevelError
-	case "silent", "none":
-		logLevel = LogLevelSilent
-	default:
-		logLevel = LogLevelInfo
-	}
-	logger = &Logger{level: logLevel}
-}
-
-// Debug logs debug-level messages.
-func (l *Logger) Debug(format string, v ...interface{}) {
-	if l.level >= LogLevelDebug {
-		log.Printf(format, v...)
-	}
-}
-
-// Info logs info-level messages.
-func (l *Logger) Info(format string, v ...interface{}) {
-	if l.level >= LogLevelInfo {
-		log.Printf(format, v...)
-	}
-}
-
-// Warn logs warning-level messages.
-func (l *Logger) Warn(format string, v ...interface{}) {
-	if l.level >= LogLevelWarn {
-		log.Printf(format, v...)
-	}
-}
-
-// Error logs error-level messages.
-func (l *Logger) Error(format string, v ...interface{}) {
-	if l.level >= LogLevelError {
-		log.Printf(format, v...)
-	}
-}
-
-// Fatal logs fatal error and exits (always shown).
-func (l *Logger) Fatal(v ...interface{}) {
-	log.Fatal(v...)
-}
-
-// Fatalf logs fatal error with format and exits (always shown).
-func (l *Logger) Fatalf(format string, v ...interface{}) {
-	log.Fatalf(format, v...)
-}
-
-// Printf is a convenience method that logs at info level.
-func (l *Logger) Printf(format string, v ...interface{}) {
-	l.Info(format, v...)
-}
-
-// User represents a single user configuration.
-type User struct {
-	Username string `yaml:"user"`
-	Password string `yaml:"password"`
-}
-
-// UserStats tracks bandwidth statistics for a user.
-type UserStats struct {
-	TxBytes uint64 // transmitted bytes (sent to client)
-	RxBytes uint64 // received bytes (received from client)
-}
-
-// SocksProxy represents a SOCKS5 proxy configuration.
-type SocksProxy struct {
-	Address  string `yaml:"address"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-}
-
-// Server holds configuration for the SSH server.
-type Server struct {
-	ListenPort    string       `yaml:"listen_port"`
-	Socks5Address string       `yaml:"socks5_address"` // Deprecated: use SocksList instead
-	SocksList     []SocksProxy `yaml:"socks_list"`     // Multiple SOCKS5 proxy configurations
-	Username      string       `yaml:"username"`       // Deprecated: use Users instead
-	Password      string       `yaml:"password"`       // Deprecated: use Users instead
-	Users         []User       `yaml:"users"`          // Multiple user configurations
-	HostKey       string       `yaml:"host_key"`       // Base64-encoded ECDSA private key (DER format)
-	LogLevel      string       `yaml:"log_level"`      // Log level: debug, info, warn, error, silent
-
-	// Bandwidth tracking
-	statsLock sync.RWMutex
-	stats     map[string]*UserStats
-
-	// SOCKS5 proxy pool
-	proxyPool *SocksProxyPool
-}
-
-// SocksProxyPool manages a pool of SOCKS5 proxies with round-robin and circuit breaker.
-type SocksProxyPool struct {
-	proxies        []SocksProxy
-	currentIndex   uint32
-	circuitBreaker map[int]*CircuitBreakerState
-	mu             sync.RWMutex
-}
-
-// CircuitBreakerState tracks the state of a single proxy in the circuit breaker.
-type CircuitBreakerState struct {
-	failedAt time.Time
-	isBroken bool
-}
-
-// NewSocksProxyPool creates a new SOCKS5 proxy pool.
-func NewSocksProxyPool(proxies []SocksProxy) *SocksProxyPool {
-	return &SocksProxyPool{
-		proxies:        proxies,
-		currentIndex:   0,
-		circuitBreaker: make(map[int]*CircuitBreakerState),
-	}
-}
-
-// GetNextProxy returns the next available proxy using round-robin with circuit breaker.
-// Returns the proxy and its index, or error if no proxies are available.
-func (p *SocksProxyPool) GetNextProxy() (*SocksProxy, int, error) {
-	if len(p.proxies) == 0 {
-		return nil, -1, fmt.Errorf("no SOCKS5 proxies configured")
-	}
-
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	now := time.Now()
-	circuitBreakerDuration := time.Minute
-
-	// Try all proxies starting from the current index
-	for i := 0; i < len(p.proxies); i++ {
-		idx := int(atomic.AddUint32(&p.currentIndex, 1)-1) % len(p.proxies)
-
-		// Check if this proxy is in circuit breaker
-		if state, exists := p.circuitBreaker[idx]; exists && state.isBroken {
-			// Check if circuit breaker duration has passed
-			if now.Sub(state.failedAt) >= circuitBreakerDuration {
-				// Reset circuit breaker
-				state.isBroken = false
-				logger.Info("[*] Circuit breaker reset for proxy %s", p.proxies[idx].Address)
-			} else {
-				// Still in circuit breaker, skip this proxy
-				continue
-			}
-		}
-
-		return &p.proxies[idx], idx, nil
-	}
-
-	return nil, -1, fmt.Errorf("all SOCKS5 proxies are currently unavailable (circuit breaker)")
-}
-
-// MarkProxyFailed marks a proxy as failed and activates the circuit breaker.
-func (p *SocksProxyPool) MarkProxyFailed(proxyIndex int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if proxyIndex < 0 || proxyIndex >= len(p.proxies) {
-		return
-	}
-
-	p.circuitBreaker[proxyIndex] = &CircuitBreakerState{
-		failedAt: time.Now(),
-		isBroken: true,
-	}
-
-	logger.Warn("[!] Proxy %s marked as failed — circuit breaker activated for 1 minutes",
-		p.proxies[proxyIndex].Address)
-}
 
 // ListenAndServe starts the SSH server and accepts connections.
 func (s *Server) ListenAndServe() error {
@@ -431,14 +231,6 @@ func (s *Server) handleConn(tcpConn net.Conn, config *ssh.ServerConfig) {
 	logger.Info("[*] SSH session closed — addr=%s", sshConn.RemoteAddr())
 }
 
-// directTCPIPPayload matches the RFC 4254 §7.2 direct-tcpip payload.
-type directTCPIPPayload struct {
-	DestAddr   string
-	DestPort   uint32
-	OriginAddr string
-	OriginPort uint32
-}
-
 // isInternalAddress checks if the given address is internal/private/localhost.
 func isInternalAddress(addr string) bool {
 	// Check for localhost names
@@ -493,7 +285,7 @@ func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
 	// Accept the channel but don't relay - just keep it open with empty ACK
 	if isInternalAddress(payload.DestAddr) {
 		logger.Warn("[!] Blocked internal address request: user=%s target=%s", username, target)
-		
+
 		// Accept the channel to send OK response
 		ch, reqs, err := newChan.Accept()
 		if err != nil {
@@ -501,10 +293,10 @@ func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
 			return
 		}
 		defer ch.Close()
-		
+
 		// Discard any requests and data - don't relay anything
 		go ssh.DiscardRequests(reqs)
-		
+
 		// Keep channel open but discard all data from client
 		io.Copy(io.Discard, ch)
 		return
@@ -609,148 +401,4 @@ func formatBytes(bytes uint64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.2f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-// -----------------------------------------------------------------------
-// Minimal SOCKS5 client (RFC 1928 + RFC 1929) — no external dependencies
-// -----------------------------------------------------------------------
-
-// dialViaSocks5 connects to a SOCKS5 proxy and requests a TCP stream to dest:port.
-func dialViaSocks5(proxy *SocksProxy, destHost string, destPort uint16) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", proxy.Address, 10*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("dial proxy: %w", err)
-	}
-
-	if err := socks5Handshake(conn, proxy.Username, proxy.Password, destHost, destPort); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	return conn, nil
-}
-
-// socks5Handshake performs the SOCKS5 greeting + authentication + CONNECT request.
-func socks5Handshake(conn net.Conn, username, password, host string, port uint16) error {
-	// ── Greeting ──────────────────────────────────────────────────────────
-	// Determine which authentication methods to offer
-	var greeting []byte
-	if username != "" || password != "" {
-		// Offer both no-auth (0x00) and username/password (0x02)
-		greeting = []byte{0x05, 0x02, 0x00, 0x02}
-	} else {
-		// Offer only no-auth (0x00)
-		greeting = []byte{0x05, 0x01, 0x00}
-	}
-
-	if _, err := conn.Write(greeting); err != nil {
-		return fmt.Errorf("socks5 greeting write: %w", err)
-	}
-
-	// Server choice: VER, METHOD
-	resp := make([]byte, 2)
-	if _, err := io.ReadFull(conn, resp); err != nil {
-		return fmt.Errorf("socks5 greeting read: %w", err)
-	}
-	if resp[0] != 0x05 {
-		return fmt.Errorf("socks5: server is not SOCKS5 (got version %d)", resp[0])
-	}
-	if resp[1] == 0xFF {
-		return fmt.Errorf("socks5: no acceptable auth method")
-	}
-
-	// Handle authentication based on server's choice
-	authMethod := resp[1]
-	switch authMethod {
-	case 0x00:
-		// No authentication required
-		break
-	case 0x02:
-		// Username/password authentication (RFC 1929)
-		if err := socks5UsernamePasswordAuth(conn, username, password); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("socks5: unsupported auth method 0x%02x", authMethod)
-	}
-
-	// ── CONNECT request ───────────────────────────────────────────────────
-	// VER=5, CMD=CONNECT(1), RSV=0, ATYP=DOMAIN(3), ADDR, PORT
-	hostBytes := []byte(host)
-	req := make([]byte, 0, 7+len(hostBytes))
-	req = append(req, 0x05, 0x01, 0x00)     // VER, CMD, RSV
-	req = append(req, 0x03)                 // ATYP: domain name
-	req = append(req, byte(len(hostBytes))) // domain length
-	req = append(req, hostBytes...)         // domain
-	req = append(req, 0, 0)                 // port placeholder
-	binary.BigEndian.PutUint16(req[len(req)-2:], port)
-
-	if _, err := conn.Write(req); err != nil {
-		return fmt.Errorf("socks5 connect write: %w", err)
-	}
-
-	// ── Response ──────────────────────────────────────────────────────────
-	// VER, REP, RSV, ATYP
-	header := make([]byte, 4)
-	if _, err := io.ReadFull(conn, header); err != nil {
-		return fmt.Errorf("socks5 response read: %w", err)
-	}
-	if header[1] != 0x00 {
-		return fmt.Errorf("socks5 CONNECT failed, REP=0x%02x", header[1])
-	}
-
-	// Skip the BND.ADDR / BND.PORT fields
-	switch header[3] {
-	case 0x01: // IPv4
-		buf := make([]byte, 4+2)
-		_, _ = io.ReadFull(conn, buf)
-	case 0x04: // IPv6
-		buf := make([]byte, 16+2)
-		_, _ = io.ReadFull(conn, buf)
-	case 0x03: // domain
-		lenBuf := make([]byte, 1)
-		_, _ = io.ReadFull(conn, lenBuf)
-		buf := make([]byte, int(lenBuf[0])+2)
-		_, _ = io.ReadFull(conn, buf)
-	default:
-		return fmt.Errorf("socks5: unknown ATYP in response: 0x%02x", header[3])
-	}
-
-	return nil
-}
-
-// socks5UsernamePasswordAuth performs username/password authentication (RFC 1929).
-func socks5UsernamePasswordAuth(conn net.Conn, username, password string) error {
-	// Username and password must be 1-255 bytes
-	if len(username) == 0 || len(username) > 255 {
-		return fmt.Errorf("socks5: invalid username length")
-	}
-	if len(password) > 255 {
-		return fmt.Errorf("socks5: invalid password length")
-	}
-
-	// Build authentication request
-	// VER=1, ULEN, UNAME, PLEN, PASSWD
-	authReq := make([]byte, 0, 3+len(username)+len(password))
-	authReq = append(authReq, 0x01)                // VER (username/password auth version)
-	authReq = append(authReq, byte(len(username))) // ULEN
-	authReq = append(authReq, []byte(username)...) // UNAME
-	authReq = append(authReq, byte(len(password))) // PLEN
-	authReq = append(authReq, []byte(password)...) // PASSWD
-
-	if _, err := conn.Write(authReq); err != nil {
-		return fmt.Errorf("socks5 auth write: %w", err)
-	}
-
-	// Read authentication response
-	// VER, STATUS
-	authResp := make([]byte, 2)
-	if _, err := io.ReadFull(conn, authResp); err != nil {
-		return fmt.Errorf("socks5 auth read: %w", err)
-	}
-
-	if authResp[1] != 0x00 {
-		return fmt.Errorf("socks5: authentication failed (status=0x%02x)", authResp[1])
-	}
-
-	return nil
 }
