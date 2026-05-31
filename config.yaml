@@ -2,7 +2,7 @@ listen_port: 2222
 
 host_key: 
 
-# Legacy single SOCKS5 proxy (deprecated - use 'socks_list' instead)
+# single SOCKS5 proxy (deprecated - use 'socks_list' instead)
 # socks5_address: 192.168.10.201:7000
 
 # Multiple SOCKS5 proxy configurations with round-robin and circuit breaker

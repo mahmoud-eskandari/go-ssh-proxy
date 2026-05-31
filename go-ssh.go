@@ -57,10 +57,10 @@ type Server struct {
 
 // SocksProxyPool manages a pool of SOCKS5 proxies with round-robin and circuit breaker.
 type SocksProxyPool struct {
-	proxies       []SocksProxy
-	currentIndex  uint32
+	proxies        []SocksProxy
+	currentIndex   uint32
 	circuitBreaker map[int]*CircuitBreakerState
-	mu            sync.RWMutex
+	mu             sync.RWMutex
 }
 
 // CircuitBreakerState tracks the state of a single proxy in the circuit breaker.
@@ -204,7 +204,7 @@ func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 				}
 			}
 
-			// Fallback to legacy single user config (for backward compatibility)
+			// Fallback to single user config (for backward compatibility)
 			if s.Username != "" && username == s.Username && password == s.Password {
 				log.Printf("[+] Auth OK  — user=%q from %s", username, c.RemoteAddr())
 
@@ -250,7 +250,7 @@ func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("encode host key: %w", err)
 		}
-		fmt.Printf("%s\n", encoded)
+		fmt.Printf("new ECDSA host key is:\n%s\n\n", encoded)
 	}
 
 	signer, err := ssh.NewSignerFromKey(privateKey)
@@ -382,10 +382,10 @@ func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
 	upstreamConn, err := dialViaSocks5(proxy, payload.DestAddr, uint16(payload.DestPort))
 	if err != nil {
 		log.Printf("[!] SOCKS5 connect to %s via %s failed: %v", target, proxy.Address, err)
-		
+
 		// Mark this proxy as failed (activate circuit breaker)
 		s.proxyPool.MarkProxyFailed(proxyIndex)
-		
+
 		_ = newChan.Reject(ssh.ConnectionFailed, err.Error())
 		return
 	}

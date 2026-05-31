@@ -37,9 +37,32 @@ go build -o go-ssh-proxy .
 
 ```yaml
 listen_port: 2222
-socks5_address: 192.168.10.10:1080
-username: myuser
-password: secret
+# ECDSA host key let it empty then run app to generate a new random key
+# to prevent next run key changes copy below the ECDSA key from output to prevent key changes
+host_key:
+# single SOCKS5 proxy (deprecated - use 'socks_list' instead)
+# socks5_address: 192.168.10.10:1080
+
+# Multiple SOCKS5 proxy configurations with round-robin and circuit breaker
+socks_list:
+  - address: 192.168.10.201:7000
+    username:
+    password:
+  - address: 127.0.0.1:7000
+    username:
+    password:
+
+
+# single user config (use 'users' list instead)
+# username: user0
+# password: pass0
+
+# Multiple user configurations
+users:
+  - user: user1
+    password: pass1
+  - user: user2
+    password: pass2
 ```
 
 ### Client connection

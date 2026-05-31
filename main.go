@@ -9,6 +9,9 @@ import (
 	"go.yaml.in/yaml/v2"
 )
 
+// version is set via ldflags at build time
+var version = "dev"
+
 func main() {
 	// Server flags
 	port := flag.String("port", "", "SSH server listen port")
@@ -17,6 +20,7 @@ func main() {
 	password := flag.String("password", "", "SSH password")
 	hostKey := flag.String("host-key", "", "SSH ECDSA host key")
 	config := flag.String("config", "", "Config Path (./config.yaml) you can use yaml file instead of config args")
+	showVersion := flag.Bool("version", false, "Show version information")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `SSH-to-SOCKS5 Tunnel Server
@@ -36,6 +40,11 @@ Flags:
 	}
 
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("go-ssh-proxy version %s\n", version)
+		os.Exit(0)
+	}
 
 	if *config == "" && (*port == "" || *proxy == "" || *user == "" || *password == "") {
 		flag.Usage()
@@ -83,7 +92,7 @@ Flags:
 		log.Fatal("at least one user must be configured (either 'users' list or legacy 'username'/'password')")
 	}
 
-	log.Printf("[*] Starting SSH-to-SOCKS5 tunnel server")
+	log.Printf("[*] Starting SSH-to-SOCKS5 tunnel server (version: %s)", version)
 	log.Printf("[*] Listening on port      : %s", srv.ListenPort)
 	
 	// Log SOCKS5 proxy configuration
