@@ -65,12 +65,12 @@ Flags:
 	if *config != "" {
 		data, err := os.ReadFile(*config)
 		if err != nil {
-			log.Fatalf("error reading file: %w", err)
+			log.Fatalf("error reading file: %s", err)
 		}
 
 		err = yaml.Unmarshal(data, &srv)
 		if err != nil {
-			log.Fatalf("error decoding config file: %w", err)
+			log.Fatalf("error decoding config file: %s", err)
 		}
 	}
 
