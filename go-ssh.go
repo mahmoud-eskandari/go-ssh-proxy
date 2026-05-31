@@ -11,21 +11,44 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// User represents a single user configuration.
+type User struct {
+	Username string `yaml:"user"`
+	Password string `yaml:"password"`
+}
+
+// UserStats tracks bandwidth statistics for a user.
+type UserStats struct {
+	TxBytes uint64 // transmitted bytes (sent to client)
+	RxBytes uint64 // received bytes (received from client)
+}
 
 // Server holds configuration for the SSH server.
 type Server struct {
 	ListenPort    string `yaml:"listen_port"`
 	Socks5Address string `yaml:"socks5_address"`
-	Username      string `yaml:"username"`
-	Password      string `yaml:"password"`
+	Username      string `yaml:"username"` // Deprecated: use Users instead
+	Password      string `yaml:"password"` // Deprecated: use Users instead
+	Users         []User `yaml:"users"`    // Multiple user configurations
 	HostKey       string `yaml:"host_key"` // Base64-encoded ECDSA private key (DER format)
+
+	// Bandwidth tracking
+	statsLock sync.RWMutex
+	stats     map[string]*UserStats
 }
 
 // ListenAndServe starts the SSH server and accepts connections.
 func (s *Server) ListenAndServe() error {
+	// Initialize stats map
+	s.stats = make(map[string]*UserStats)
+
 	config, err := s.buildSSHConfig()
 	if err != nil {
 		return fmt.Errorf("build ssh config: %w", err)
@@ -36,6 +59,9 @@ func (s *Server) ListenAndServe() error {
 		return fmt.Errorf("listen on port %s: %w", s.ListenPort, err)
 	}
 	defer listener.Close()
+
+	// Start statistics printer goroutine
+	go s.printStatsPeriodically()
 
 	log.Printf("[*] Server ready — waiting for SSH clients...")
 
@@ -53,11 +79,50 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 	config := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			if c.User() == s.Username && string(pass) == s.Password {
-				log.Printf("[+] Auth OK  — user=%q from %s", c.User(), c.RemoteAddr())
-				return &ssh.Permissions{}, nil
+			username := c.User()
+			password := string(pass)
+
+			// Check against users list first
+			if len(s.Users) > 0 {
+				for _, user := range s.Users {
+					if user.Username == username && user.Password == password {
+						log.Printf("[+] Auth OK  — user=%q from %s", username, c.RemoteAddr())
+
+						// Initialize stats for this user if not exists
+						s.statsLock.Lock()
+						if _, exists := s.stats[username]; !exists {
+							s.stats[username] = &UserStats{}
+						}
+						s.statsLock.Unlock()
+
+						// Store username in permissions for later use
+						return &ssh.Permissions{
+							Extensions: map[string]string{
+								"username": username,
+							},
+						}, nil
+					}
+				}
 			}
-			log.Printf("[-] Auth FAIL — user=%q from %s", c.User(), c.RemoteAddr())
+
+			// Fallback to legacy single user config (for backward compatibility)
+			if s.Username != "" && username == s.Username && password == s.Password {
+				log.Printf("[+] Auth OK  — user=%q from %s", username, c.RemoteAddr())
+
+				s.statsLock.Lock()
+				if _, exists := s.stats[username]; !exists {
+					s.stats[username] = &UserStats{}
+				}
+				s.statsLock.Unlock()
+
+				return &ssh.Permissions{
+					Extensions: map[string]string{
+						"username": username,
+					},
+				}, nil
+			}
+
+			log.Printf("[-] Auth FAIL — user=%q from %s", username, c.RemoteAddr())
 			return nil, fmt.Errorf("invalid credentials")
 		},
 		// Reject public-key auth so only password is accepted
@@ -80,7 +145,7 @@ func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("generate host key: %w", err)
 		}
-		
+
 		// Encode to base64 and print to stdout
 		encoded, err := encodeHostKeyToBase64(privateKey)
 		if err != nil {
@@ -138,13 +203,16 @@ func (s *Server) handleConn(tcpConn net.Conn, config *ssh.ServerConfig) {
 	// Discard global requests (keepalive, etc.)
 	go ssh.DiscardRequests(reqs)
 
+	// Get username from SSH connection
+	username := sshConn.User()
+
 	// Handle each channel opened by the client
 	for newChan := range chans {
 		switch newChan.ChannelType() {
 
 		case "direct-tcpip":
 			// Standard SSH -L / -D dynamic forward channel
-			go s.handleDirectTCPIP(newChan)
+			go s.handleDirectTCPIP(newChan, username)
 
 		case "session":
 			// Some SSH clients open a session channel during -D; accept and do nothing
@@ -191,7 +259,7 @@ type directTCPIPPayload struct {
 
 // handleDirectTCPIP handles a direct-tcpip channel (used by SSH -D SOCKS proxy).
 // Instead of connecting to the original destination, we route through the upstream SOCKS5 proxy.
-func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel) {
+func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
 	var payload directTCPIPPayload
 	if err := ssh.Unmarshal(newChan.ExtraData(), &payload); err != nil {
 		log.Printf("[!] Parse direct-tcpip payload: %v", err)
@@ -221,11 +289,72 @@ func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel) {
 
 	go ssh.DiscardRequests(reqs)
 
-	// Bidirectional copy between SSH channel and SOCKS5 upstream
+	// Get user stats for tracking
+	s.statsLock.RLock()
+	userStats := s.stats[username]
+	s.statsLock.RUnlock()
+
+	// Bidirectional copy between SSH channel and SOCKS5 upstream with bandwidth tracking
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(upstreamConn, ch); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(ch, upstreamConn); done <- struct{}{} }()
+
+	// RX: client → upstream (data received from client)
+	go func() {
+		n, _ := io.Copy(upstreamConn, ch)
+		atomic.AddUint64(&userStats.RxBytes, uint64(n))
+		done <- struct{}{}
+	}()
+
+	// TX: upstream → client (data sent to client)
+	go func() {
+		n, _ := io.Copy(ch, upstreamConn)
+		atomic.AddUint64(&userStats.TxBytes, uint64(n))
+		done <- struct{}{}
+	}()
+
 	<-done
+}
+
+// printStatsPeriodically prints bandwidth statistics for each user every minute.
+func (s *Server) printStatsPeriodically() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.statsLock.RLock()
+
+		if len(s.stats) == 0 {
+			s.statsLock.RUnlock()
+			continue
+		}
+
+		log.Printf("========== Bandwidth Statistics ==========")
+		for username, stats := range s.stats {
+			tx := atomic.LoadUint64(&stats.TxBytes)
+			rx := atomic.LoadUint64(&stats.RxBytes)
+
+			log.Printf("User: %s | TX: %s | RX: %s",
+				username,
+				formatBytes(tx),
+				formatBytes(rx))
+		}
+		log.Printf("==========================================")
+
+		s.statsLock.RUnlock()
+	}
+}
+
+// formatBytes converts bytes to human-readable format.
+func formatBytes(bytes uint64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := uint64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
 // -----------------------------------------------------------------------

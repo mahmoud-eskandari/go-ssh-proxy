@@ -1,5 +1,16 @@
 listen_port: 2222
 socks5_address: 192.168.10.201:7000
-username: mahmoud
-password: 123
 host_key: 
+
+# Legacy single user config (deprecated - use 'users' list instead)
+# username: mahmoud
+# password: 123
+
+# Multiple user configurations
+users:
+  - user: user1
+    password: pass1
+  - user: user2
+    password: pass2
+  - user: mahmoud
+    password: "123"
