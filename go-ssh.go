@@ -384,7 +384,7 @@ func (s *Server) printStatsPeriodically() {
 				formatBytes(tx),
 				formatBytes(rx))
 		}
-		log.Print("==========================================")
+		log.Printf("================== Since: %s ==================", initTime.Format(time.RFC3339))
 
 		s.statsLock.RUnlock()
 	}

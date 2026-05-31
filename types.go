@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+var initTime time.Time
+
 // User represents a single user configuration.
 type User struct {
 	Username string `yaml:"user"`

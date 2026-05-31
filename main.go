@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"go.yaml.in/yaml/v2"
 )
@@ -106,6 +107,7 @@ Flags:
 	logger.Info("[*] Log level              : %s", logLevel)
 	logger.Info("[*] Listening on port      : %s", srv.ListenPort)
 
+	initTime = time.Now()
 	// Log SOCKS5 proxy configuration
 	if len(srv.SocksList) > 0 {
 		logger.Info("[*] SOCKS5 proxy pool      : %d proxies", len(srv.SocksList))
