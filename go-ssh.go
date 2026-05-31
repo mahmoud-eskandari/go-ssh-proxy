@@ -89,7 +89,7 @@ func (p *SocksProxyPool) GetNextProxy() (*SocksProxy, int, error) {
 	defer p.mu.RUnlock()
 
 	now := time.Now()
-	circuitBreakerDuration := 10 * time.Minute
+	circuitBreakerDuration := time.Minute
 
 	// Try all proxies starting from the current index
 	for i := 0; i < len(p.proxies); i++ {
@@ -128,7 +128,7 @@ func (p *SocksProxyPool) MarkProxyFailed(proxyIndex int) {
 		isBroken: true,
 	}
 
-	log.Printf("[!] Proxy %s marked as failed — circuit breaker activated for 10 minutes",
+	log.Printf("[!] Proxy %s marked as failed — circuit breaker activated for 1 minutes",
 		p.proxies[proxyIndex].Address)
 }
 
@@ -356,6 +356,44 @@ type directTCPIPPayload struct {
 	OriginPort uint32
 }
 
+// isInternalAddress checks if the given address is internal/private/localhost.
+func isInternalAddress(addr string) bool {
+	// Check for localhost names
+	if addr == "localhost" || addr == "127.0.0.1" || addr == "::1" {
+		return true
+	}
+
+	// Parse IP address
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		// If it's not a valid IP, try resolving it as hostname
+		// Check for localhost variants
+		if addr == "ip6-localhost" || addr == "ip6-loopback" {
+			return true
+		}
+		// For hostnames, we'll be conservative and allow them
+		// (we can't easily determine if a hostname resolves to internal IP)
+		return false
+	}
+
+	// Check for loopback
+	if ip.IsLoopback() {
+		return true
+	}
+
+	// Check for private IP ranges
+	if ip.IsPrivate() {
+		return true
+	}
+
+	// Check for link-local addresses
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+
+	return false
+}
+
 // handleDirectTCPIP handles a direct-tcpip channel (used by SSH -D SOCKS proxy).
 // Instead of connecting to the original destination, we route through the upstream SOCKS5 proxy.
 func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
@@ -367,6 +405,13 @@ func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
 	}
 
 	target := fmt.Sprintf("%s:%d", payload.DestAddr, payload.DestPort)
+
+	// Prevent connections to internal/private IPs and localhost
+	if isInternalAddress(payload.DestAddr) {
+		log.Printf("[!] Blocked internal address request: user=%s target=%s", username, target)
+		_ = newChan.Reject(ssh.Prohibited, "connection to internal addresses is not allowed")
+		return
+	}
 
 	// Get next available proxy from pool
 	proxy, proxyIndex, err := s.proxyPool.GetNextProxy()
