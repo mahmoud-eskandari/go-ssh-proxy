@@ -55,7 +55,7 @@ type SocksProxyPool struct {
 
 // CircuitBreakerState tracks the state of a single proxy in the circuit breaker.
 type CircuitBreakerState struct {
-	failedAt time.Time
+	failures []time.Time // timestamps of recent failures
 	isBroken bool
 }
 

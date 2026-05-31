@@ -29,22 +29,34 @@ func (p *SocksProxyPool) GetNextProxy() (*SocksProxy, int, error) {
 	defer p.mu.RUnlock()
 
 	now := time.Now()
-	circuitBreakerDuration := time.Minute
+	failureWindow := time.Minute
+	errorThreshold := 3
 
 	// Try all proxies starting from the current index
 	for i := 0; i < len(p.proxies); i++ {
 		idx := int(atomic.AddUint32(&p.currentIndex, 1)-1) % len(p.proxies)
 
 		// Check if this proxy is in circuit breaker
-		if state, exists := p.circuitBreaker[idx]; exists && state.isBroken {
-			// Check if circuit breaker duration has passed
-			if now.Sub(state.failedAt) >= circuitBreakerDuration {
-				// Reset circuit breaker
-				state.isBroken = false
-				logger.Info("[*] Circuit breaker reset for proxy %s", p.proxies[idx].Address)
-			} else {
-				// Still in circuit breaker, skip this proxy
-				continue
+		if state, exists := p.circuitBreaker[idx]; exists {
+			// Clean up old failures
+			validFailures := make([]time.Time, 0)
+			for _, failTime := range state.failures {
+				if now.Sub(failTime) < failureWindow {
+					validFailures = append(validFailures, failTime)
+				}
+			}
+			state.failures = validFailures
+
+			// Check if we should reset the circuit breaker
+			if state.isBroken {
+				if len(state.failures) < errorThreshold {
+					// Not enough recent failures, reset circuit breaker
+					state.isBroken = false
+					logger.Info("[*] Circuit breaker reset for proxy %s (errors dropped below threshold)", p.proxies[idx].Address)
+				} else {
+					// Still too many recent failures, skip this proxy
+					continue
+				}
 			}
 		}
 
@@ -54,7 +66,7 @@ func (p *SocksProxyPool) GetNextProxy() (*SocksProxy, int, error) {
 	return nil, -1, fmt.Errorf("all SOCKS5 proxies are currently unavailable (circuit breaker)")
 }
 
-// MarkProxyFailed marks a proxy as failed and activates the circuit breaker.
+// MarkProxyFailed marks a proxy as failed and activates the circuit breaker after 3 errors within 1 minute.
 func (p *SocksProxyPool) MarkProxyFailed(proxyIndex int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -63,13 +75,43 @@ func (p *SocksProxyPool) MarkProxyFailed(proxyIndex int) {
 		return
 	}
 
-	p.circuitBreaker[proxyIndex] = &CircuitBreakerState{
-		failedAt: time.Now(),
-		isBroken: true,
+	now := time.Now()
+	failureWindow := time.Minute
+	errorThreshold := 3
+
+	// Get or create circuit breaker state for this proxy
+	state, exists := p.circuitBreaker[proxyIndex]
+	if !exists {
+		state = &CircuitBreakerState{
+			failures: make([]time.Time, 0),
+			isBroken: false,
+		}
+		p.circuitBreaker[proxyIndex] = state
 	}
 
-	logger.Warn("[!] Proxy %s marked as failed — circuit breaker activated for 1 minutes",
-		p.proxies[proxyIndex].Address)
+	// Add the new failure timestamp
+	state.failures = append(state.failures, now)
+
+	// Remove failures older than the failure window (1 minute)
+	validFailures := make([]time.Time, 0)
+	for _, failTime := range state.failures {
+		if now.Sub(failTime) < failureWindow {
+			validFailures = append(validFailures, failTime)
+		}
+	}
+	state.failures = validFailures
+
+	// Activate circuit breaker if we have 3 or more errors in the last minute
+	if len(state.failures) >= errorThreshold {
+		if !state.isBroken {
+			state.isBroken = true
+			logger.Warn("[!] Proxy %s marked as failed — circuit breaker activated (%d errors in last minute)",
+				p.proxies[proxyIndex].Address, len(state.failures))
+		}
+	} else {
+		logger.Warn("[!] Proxy %s connection error (%d/%d errors in last minute)",
+			p.proxies[proxyIndex].Address, len(state.failures), errorThreshold)
+	}
 }
 
 // -----------------------------------------------------------------------
