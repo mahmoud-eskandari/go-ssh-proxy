@@ -63,8 +63,16 @@ Flags:
 	}
 	
 	// Validate configuration
-	if srv.ListenPort == "" || srv.Socks5Address == "" {
-		log.Fatal("listen_port and socks5_address are required")
+	if srv.ListenPort == "" {
+		log.Fatal("listen_port is required")
+	}
+	
+	// Check SOCKS5 proxy configuration
+	hasSocksList := len(srv.SocksList) > 0
+	hasLegacySocks := srv.Socks5Address != ""
+	
+	if !hasSocksList && !hasLegacySocks {
+		log.Fatal("at least one SOCKS5 proxy must be configured (either 'socks_list' or legacy 'socks5_address')")
 	}
 	
 	// Check if we have at least one user configured (either legacy single user or users list)
@@ -77,7 +85,20 @@ Flags:
 
 	log.Printf("[*] Starting SSH-to-SOCKS5 tunnel server")
 	log.Printf("[*] Listening on port      : %s", srv.ListenPort)
-	log.Printf("[*] Upstream SOCKS5 proxy  : %s", srv.Socks5Address)
+	
+	// Log SOCKS5 proxy configuration
+	if len(srv.SocksList) > 0 {
+		log.Printf("[*] SOCKS5 proxy pool      : %d proxies", len(srv.SocksList))
+		for i, proxy := range srv.SocksList {
+			authStatus := "no auth"
+			if proxy.Username != "" {
+				authStatus = fmt.Sprintf("auth: %s", proxy.Username)
+			}
+			log.Printf("[*]   %d. %s (%s)", i+1, proxy.Address, authStatus)
+		}
+	} else {
+		log.Printf("[*] Upstream SOCKS5 proxy  : %s (legacy mode)", srv.Socks5Address)
+	}
 	
 	// Log configured users
 	if len(srv.Users) > 0 {
