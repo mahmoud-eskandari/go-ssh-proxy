@@ -23,12 +23,12 @@ func (s *Server) ListenAndServe() error {
 
 	// Initialize SOCKS5 proxy pool
 	if len(s.SocksList) > 0 {
-		s.proxyPool = NewSocksProxyPool(s.SocksList)
+		s.proxyPool = NewSocksProxyPool(s.SocksList, s.CircuitBreakerEnabled)
 		logger.Info("[*] Initialized SOCKS5 proxy pool with %d proxies", len(s.SocksList))
 	} else if s.Socks5Address != "" {
 		// Backward compatibility: convert single proxy to list
 		s.SocksList = []SocksProxy{{Address: s.Socks5Address}}
-		s.proxyPool = NewSocksProxyPool(s.SocksList)
+		s.proxyPool = NewSocksProxyPool(s.SocksList, s.CircuitBreakerEnabled)
 		logger.Info("[*] Using legacy single SOCKS5 proxy: %s", s.Socks5Address)
 	}
 

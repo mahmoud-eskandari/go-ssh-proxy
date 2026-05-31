@@ -56,11 +56,12 @@ Flags:
 	}
 
 	srv := &Server{
-		ListenPort:    *port,
-		Socks5Address: *proxy,
-		Username:      *user,
-		Password:      *password,
-		HostKey:       *hostKey,
+		ListenPort:            *port,
+		Socks5Address:         *proxy,
+		Username:              *user,
+		Password:              *password,
+		HostKey:               *hostKey,
+		CircuitBreakerEnabled: true, // Default to enabled
 	}
 
 	if *config != "" {
@@ -131,6 +132,13 @@ Flags:
 	} else {
 		logger.Info("[*] Allowed user           : %s", srv.Username)
 	}
+
+	// Log circuit breaker status
+	cbStatus := "enabled"
+	if !srv.CircuitBreakerEnabled {
+		cbStatus = "disabled"
+	}
+	logger.Info("[*] Circuit breaker        : %s", cbStatus)
 
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("[!] Server error: %v", err)

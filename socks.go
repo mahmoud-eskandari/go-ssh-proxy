@@ -10,11 +10,12 @@ import (
 )
 
 // NewSocksProxyPool creates a new SOCKS5 proxy pool.
-func NewSocksProxyPool(proxies []SocksProxy) *SocksProxyPool {
+func NewSocksProxyPool(proxies []SocksProxy, circuitBreakerEnabled bool) *SocksProxyPool {
 	return &SocksProxyPool{
-		proxies:        proxies,
-		currentIndex:   0,
-		circuitBreaker: make(map[int]*CircuitBreakerState),
+		proxies:               proxies,
+		currentIndex:          0,
+		circuitBreaker:        make(map[int]*CircuitBreakerState),
+		circuitBreakerEnabled: circuitBreakerEnabled,
 	}
 }
 
@@ -36,26 +37,28 @@ func (p *SocksProxyPool) GetNextProxy() (*SocksProxy, int, error) {
 	for i := 0; i < len(p.proxies); i++ {
 		idx := int(atomic.AddUint32(&p.currentIndex, 1)-1) % len(p.proxies)
 
-		// Check if this proxy is in circuit breaker
-		if state, exists := p.circuitBreaker[idx]; exists {
-			// Clean up old failures
-			validFailures := make([]time.Time, 0)
-			for _, failTime := range state.failures {
-				if now.Sub(failTime) < failureWindow {
-					validFailures = append(validFailures, failTime)
+		// Check if this proxy is in circuit breaker (only if circuit breaker is enabled)
+		if p.circuitBreakerEnabled {
+			if state, exists := p.circuitBreaker[idx]; exists {
+				// Clean up old failures
+				validFailures := make([]time.Time, 0)
+				for _, failTime := range state.failures {
+					if now.Sub(failTime) < failureWindow {
+						validFailures = append(validFailures, failTime)
+					}
 				}
-			}
-			state.failures = validFailures
+				state.failures = validFailures
 
-			// Check if we should reset the circuit breaker
-			if state.isBroken {
-				if len(state.failures) < errorThreshold {
-					// Not enough recent failures, reset circuit breaker
-					state.isBroken = false
-					logger.Info("[*] Circuit breaker reset for proxy %s (errors dropped below threshold)", p.proxies[idx].Address)
-				} else {
-					// Still too many recent failures, skip this proxy
-					continue
+				// Check if we should reset the circuit breaker
+				if state.isBroken {
+					if len(state.failures) < errorThreshold {
+						// Not enough recent failures, reset circuit breaker
+						state.isBroken = false
+						logger.Info("[*] Circuit breaker reset for proxy %s (errors dropped below threshold)", p.proxies[idx].Address)
+					} else {
+						// Still too many recent failures, skip this proxy
+						continue
+					}
 				}
 			}
 		}
@@ -68,12 +71,18 @@ func (p *SocksProxyPool) GetNextProxy() (*SocksProxy, int, error) {
 
 // MarkProxyFailed marks a proxy as failed and activates the circuit breaker after 3 errors within 1 minute.
 func (p *SocksProxyPool) MarkProxyFailed(proxyIndex int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if proxyIndex < 0 || proxyIndex >= len(p.proxies) {
 		return
 	}
+
+	// If circuit breaker is disabled, just log the error and return
+	if !p.circuitBreakerEnabled {
+		logger.Warn("[!] Proxy %s connection error (circuit breaker disabled)", p.proxies[proxyIndex].Address)
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	now := time.Now()
 	failureWindow := time.Minute

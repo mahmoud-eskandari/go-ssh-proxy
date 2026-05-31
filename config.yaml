@@ -8,6 +8,11 @@ listen_port: 2222
 #   silent - No logs (except fatal errors)
 log_level: info
 
+# Circuit breaker: Automatically disable failing proxies
+#   true  - Enable circuit breaker (default) - proxies with 3+ errors in 1 minute are temporarily disabled
+#   false - Disable circuit breaker - continue using all proxies regardless of errors
+circuit_breaker_enabled: false
+
 host_key: 
 
 # single SOCKS5 proxy (deprecated - use 'socks_list' instead)

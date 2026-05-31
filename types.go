@@ -28,14 +28,15 @@ type SocksProxy struct {
 
 // Server holds configuration for the SSH server.
 type Server struct {
-	ListenPort    string       `yaml:"listen_port"`
-	Socks5Address string       `yaml:"socks5_address"` // Deprecated: use SocksList instead
-	SocksList     []SocksProxy `yaml:"socks_list"`     // Multiple SOCKS5 proxy configurations
-	Username      string       `yaml:"username"`       // Deprecated: use Users instead
-	Password      string       `yaml:"password"`       // Deprecated: use Users instead
-	Users         []User       `yaml:"users"`          // Multiple user configurations
-	HostKey       string       `yaml:"host_key"`       // Base64-encoded ECDSA private key (DER format)
-	LogLevel      string       `yaml:"log_level"`      // Log level: debug, info, warn, error, silent
+	ListenPort             string       `yaml:"listen_port"`
+	Socks5Address          string       `yaml:"socks5_address"`           // Deprecated: use SocksList instead
+	SocksList              []SocksProxy `yaml:"socks_list"`               // Multiple SOCKS5 proxy configurations
+	Username               string       `yaml:"username"`                 // Deprecated: use Users instead
+	Password               string       `yaml:"password"`                 // Deprecated: use Users instead
+	Users                  []User       `yaml:"users"`                    // Multiple user configurations
+	HostKey                string       `yaml:"host_key"`                 // Base64-encoded ECDSA private key (DER format)
+	LogLevel               string       `yaml:"log_level"`                // Log level: debug, info, warn, error, silent
+	CircuitBreakerEnabled  bool         `yaml:"circuit_breaker_enabled"`  // Enable/disable circuit breaker for SOCKS5 proxies (default: true)
 
 	// Bandwidth tracking
 	statsLock sync.RWMutex
@@ -47,10 +48,11 @@ type Server struct {
 
 // SocksProxyPool manages a pool of SOCKS5 proxies with round-robin and circuit breaker.
 type SocksProxyPool struct {
-	proxies        []SocksProxy
-	currentIndex   uint32
-	circuitBreaker map[int]*CircuitBreakerState
-	mu             sync.RWMutex
+	proxies               []SocksProxy
+	currentIndex          uint32
+	circuitBreaker        map[int]*CircuitBreakerState
+	circuitBreakerEnabled bool
+	mu                    sync.RWMutex
 }
 
 // CircuitBreakerState tracks the state of a single proxy in the circuit breaker.
