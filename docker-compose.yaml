@@ -2,7 +2,7 @@ services:
   go-ssh-proxy:
     image: mahmoudetc/go-ssh-proxy:latest
     container_name: 'go-ssh-proxy'
-    restart: always
+    restart: unless-stopped
     volumes:
         - "./config.yaml:/app/config.yaml:ro"
     ports:

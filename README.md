@@ -19,6 +19,48 @@ Client (ssh -D 8080) → SSH Server (this tool) → SOCKS5 Proxy → Internet
 go build -o go-ssh-proxy .
 ```
 
+## Docker
+
+Docker image is available on [Docker Hub](https://hub.docker.com/r/mahmoudetc/go-ssh-proxy).
+
+### Pull the image
+
+```bash
+docker pull mahmoudetc/go-ssh-proxy
+```
+
+### Run with Docker
+
+```bash
+docker run -d \
+  -p 2222:2222 \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  mahmoudetc/go-ssh-proxy
+```
+
+### Run with docker-compose
+
+Create a `docker-compose.yaml` file:
+
+```yaml
+version: '3.8'
+
+services:
+  go-ssh-proxy:
+    image: mahmoudetc/go-ssh-proxy
+    ports:
+      - "2222:2222"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    restart: unless-stopped
+```
+
+Then run:
+
+```bash
+docker-compose up -d
+```
+
 ## Usage
 
 ### Command-line flags
@@ -112,6 +154,64 @@ Then configure your browser or application to use `localhost:8080` as a SOCKS5 p
 
 ```bash
 go build -o go-ssh-proxy .
+```
+
+<div dir="rtl">
+
+## داکر
+
+تصویر داکر در [Docker Hub](https://hub.docker.com/r/mahmoudetc/go-ssh-proxy) موجود است.
+
+### دریافت تصویر
+
+</div>
+
+```bash
+docker pull mahmoudetc/go-ssh-proxy
+```
+
+<div dir="rtl">
+
+### اجرا با Docker
+
+</div>
+
+```bash
+docker run -d \
+  -p 2222:2222 \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  mahmoudetc/go-ssh-proxy
+```
+
+<div dir="rtl">
+
+### اجرا با docker-compose
+
+یک فایل `docker-compose.yaml` ایجاد کنید:
+
+</div>
+
+```yaml
+version: '3.8'
+
+services:
+  go-ssh-proxy:
+    image: mahmoudetc/go-ssh-proxy
+    ports:
+      - "2222:2222"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    restart: unless-stopped
+```
+
+<div dir="rtl">
+
+سپس اجرا کنید:
+
+</div>
+
+```bash
+docker-compose up -d
 ```
 
 <div dir="rtl">
