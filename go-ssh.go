@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync/atomic"
 	"time"
@@ -195,33 +196,33 @@ func (s *Server) handleConn(tcpConn net.Conn, config *ssh.ServerConfig) {
 		case "direct-tcpip":
 			// Standard SSH -L / -D dynamic forward channel
 			go s.handleDirectTCPIP(newChan, username)
-
-		case "session":
-			// Some SSH clients open a session channel during -D; accept and do nothing
-			ch, reqs2, err := newChan.Accept()
-			if err != nil {
-				logger.Error("[!] Accept session channel: %v", err)
-				continue
-			}
-			go func() {
-				defer ch.Close()
-				// Handle session requests — accept pty-req and shell to prevent client errors
-				for req := range reqs2 {
-					switch req.Type {
-					case "pty-req", "shell":
-						// Accept PTY and shell requests silently (prevents client errors)
-						if req.WantReply {
-							_ = req.Reply(true, nil)
-						}
-					default:
-						// Reject other requests (exec, subsystem, etc.)
-						if req.WantReply {
-							_ = req.Reply(false, nil)
-						}
+			/*
+				case "session":
+					// Some SSH clients open a session channel during -D; accept and do nothing
+					ch, reqs2, err := newChan.Accept()
+					if err != nil {
+						logger.Error("[!] Accept session channel: %v", err)
+						continue
 					}
-				}
-			}()
-
+					go func() {
+						defer ch.Close()
+						// Handle session requests — accept pty-req and shell to prevent client errors
+						for req := range reqs2 {
+							switch req.Type {
+							case "pty-req", "shell":
+								// Accept PTY and shell requests silently (prevents client errors)
+								if req.WantReply {
+									_ = req.Reply(true, nil)
+								}
+							default:
+								// Reject other requests (exec, subsystem, etc.)
+								if req.WantReply {
+									_ = req.Reply(false, nil)
+								}
+							}
+						}
+					}()
+			*/
 		default:
 			logger.Debug("[~] Rejecting unknown channel type: %s", newChan.ChannelType())
 			_ = newChan.Reject(ssh.UnknownChannelType, "unsupported channel type")
@@ -373,17 +374,17 @@ func (s *Server) printStatsPeriodically() {
 			continue
 		}
 
-		logger.Info("========== Bandwidth Statistics ==========")
+		log.Print("========== Bandwidth Statistics ==========")
 		for username, stats := range s.stats {
 			tx := atomic.LoadUint64(&stats.TxBytes)
 			rx := atomic.LoadUint64(&stats.RxBytes)
 
-			logger.Info("User: %s | TX: %s | RX: %s",
+			log.Printf("User: %s | TX: %s | RX: %s",
 				username,
 				formatBytes(tx),
 				formatBytes(rx))
 		}
-		logger.Info("==========================================")
+		log.Print("==========================================")
 
 		s.statsLock.RUnlock()
 	}
