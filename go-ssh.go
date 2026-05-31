@@ -155,10 +155,19 @@ func (s *Server) handleConn(tcpConn net.Conn, config *ssh.ServerConfig) {
 			}
 			go func() {
 				defer ch.Close()
-				// Drain requests (pty-req, shell, exec …) — we don't need them
+				// Handle session requests — accept pty-req and shell to prevent client errors
 				for req := range reqs2 {
-					if req.WantReply {
-						_ = req.Reply(false, nil)
+					switch req.Type {
+					case "pty-req", "shell":
+						// Accept PTY and shell requests silently (prevents client errors)
+						if req.WantReply {
+							_ = req.Reply(true, nil)
+						}
+					default:
+						// Reject other requests (exec, subsystem, etc.)
+						if req.WantReply {
+							_ = req.Reply(false, nil)
+						}
 					}
 				}
 			}()
