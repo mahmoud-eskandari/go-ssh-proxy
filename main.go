@@ -10,7 +10,7 @@ import (
 )
 
 // version is set via ldflags at build time
-var version = "dev"
+var version = "v1.0.1"
 
 func main() {
 	// Server flags
@@ -70,31 +70,31 @@ Flags:
 			log.Fatalf("error decoding config file: %w", err)
 		}
 	}
-	
+
 	// Validate configuration
 	if srv.ListenPort == "" {
 		log.Fatal("listen_port is required")
 	}
-	
+
 	// Check SOCKS5 proxy configuration
 	hasSocksList := len(srv.SocksList) > 0
 	hasLegacySocks := srv.Socks5Address != ""
-	
+
 	if !hasSocksList && !hasLegacySocks {
 		log.Fatal("at least one SOCKS5 proxy must be configured (either 'socks_list' or legacy 'socks5_address')")
 	}
-	
+
 	// Check if we have at least one user configured (either legacy single user or users list)
 	hasUsers := len(srv.Users) > 0
 	hasLegacyUser := srv.Username != "" && srv.Password != ""
-	
+
 	if !hasUsers && !hasLegacyUser {
 		log.Fatal("at least one user must be configured (either 'users' list or legacy 'username'/'password')")
 	}
 
 	log.Printf("[*] Starting SSH-to-SOCKS5 tunnel server (version: %s)", version)
 	log.Printf("[*] Listening on port      : %s", srv.ListenPort)
-	
+
 	// Log SOCKS5 proxy configuration
 	if len(srv.SocksList) > 0 {
 		log.Printf("[*] SOCKS5 proxy pool      : %d proxies", len(srv.SocksList))
@@ -108,7 +108,7 @@ Flags:
 	} else {
 		log.Printf("[*] Upstream SOCKS5 proxy  : %s (legacy mode)", srv.Socks5Address)
 	}
-	
+
 	// Log configured users
 	if len(srv.Users) > 0 {
 		log.Printf("[*] Configured users       : %d", len(srv.Users))

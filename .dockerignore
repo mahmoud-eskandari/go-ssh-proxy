@@ -1,0 +1,30 @@
+# Git
+.git
+.github
+.gitignore
+
+# Build artifacts
+go-ssh-proxy
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+*.out
+
+# Documentation
+README.md
+*.md
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
