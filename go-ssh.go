@@ -4,6 +4,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -19,6 +21,7 @@ type Server struct {
 	Socks5Address string `yaml:"socks5_address"`
 	Username      string `yaml:"username"`
 	Password      string `yaml:"password"`
+	HostKey       string `yaml:"host_key"` // Base64-encoded ECDSA private key (DER format)
 }
 
 // ListenAndServe starts the SSH server and accepts connections.
@@ -46,7 +49,7 @@ func (s *Server) ListenAndServe() error {
 	}
 }
 
-// buildSSHConfig creates the SSH server configuration with an ephemeral host key.
+// buildSSHConfig creates the SSH server configuration with a host key from config or generates one.
 func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 	config := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
@@ -61,11 +64,31 @@ func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 		PublicKeyCallback: nil,
 	}
 
-	// Generate a fresh ECDSA host key on every run (no key file needed)
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("generate host key: %w", err)
+	var privateKey *ecdsa.PrivateKey
+	var err error
+
+	if s.HostKey != "" {
+		// Load host key from config
+		privateKey, err = loadHostKeyFromBase64(s.HostKey)
+		if err != nil {
+			return nil, fmt.Errorf("load host key from config: %w", err)
+		}
+		log.Printf("[*] Loaded host key from config")
+	} else {
+		// Generate a new ECDSA host key
+		privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("generate host key: %w", err)
+		}
+		
+		// Encode to base64 and print to stdout
+		encoded, err := encodeHostKeyToBase64(privateKey)
+		if err != nil {
+			return nil, fmt.Errorf("encode host key: %w", err)
+		}
+		fmt.Printf("%s\n", encoded)
 	}
+
 	signer, err := ssh.NewSignerFromKey(privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("create signer: %w", err)
@@ -73,6 +96,31 @@ func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 	config.AddHostKey(signer)
 
 	return config, nil
+}
+
+// loadHostKeyFromBase64 decodes a base64-encoded ECDSA private key.
+func loadHostKeyFromBase64(encoded string) (*ecdsa.PrivateKey, error) {
+	derBytes, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+
+	privateKey, err := x509.ParseECPrivateKey(derBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse ECDSA key: %w", err)
+	}
+
+	return privateKey, nil
+}
+
+// encodeHostKeyToBase64 encodes an ECDSA private key to base64.
+func encodeHostKeyToBase64(privateKey *ecdsa.PrivateKey) (string, error) {
+	derBytes, err := x509.MarshalECPrivateKey(privateKey)
+	if err != nil {
+		return "", fmt.Errorf("marshal ECDSA key: %w", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(derBytes), nil
 }
 
 // handleConn performs the SSH handshake and routes channel requests.

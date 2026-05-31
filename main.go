@@ -15,6 +15,7 @@ func main() {
 	proxy := flag.String("proxy", "", "Upstream SOCKS5 proxy address (host:port)")
 	user := flag.String("user", "", "SSH username")
 	password := flag.String("password", "", "SSH password")
+	hostKey := flag.String("host-key", "", "SSH password")
 	config := flag.String("config", "", "Config Path (./config.yaml) you can use yaml file instead of config args")
 
 	flag.Usage = func() {
@@ -46,6 +47,7 @@ Flags:
 		Socks5Address: *proxy,
 		Username:      *user,
 		Password:      *password,
+		HostKey:       *hostKey,
 	}
 
 	if *config != "" {
