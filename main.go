@@ -29,13 +29,16 @@ Usage:
   %s -port <port> -proxy <socks5_host:port> -user <username> -password <password>
 
 Example:
+  %s -config ./config.yaml
+    OR
   %s -port 2222 -proxy 192.168.10.10:1080 -user myuser -password secret
+  
 
 Client usage (dynamic SOCKS5 via SSH -D):
   ssh <user>@<server> -N -p <port> -D 8080
 
 Flags:
-`, os.Args[0], os.Args[0])
+`, os.Args[0], os.Args[0], os.Args[0])
 		flag.PrintDefaults()
 	}
 
