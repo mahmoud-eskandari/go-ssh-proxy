@@ -10,7 +10,7 @@ import (
 )
 
 // version is set via ldflags at build time
-var version = "v1.2.0"
+var version = "v1.2.1"
 
 func main() {
 	// Server flags
