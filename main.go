@@ -10,7 +10,7 @@ import (
 )
 
 // version is set via ldflags at build time
-var version = "v1.2.1"
+var version = "dev"
 
 func main() {
 	// Server flags
@@ -95,31 +95,39 @@ Flags:
 		log.Fatal("at least one user must be configured (either 'users' list or legacy 'username'/'password')")
 	}
 
-	log.Printf("[*] Starting SSH-to-SOCKS5 tunnel server (version: %s)", version)
-	log.Printf("[*] Listening on port      : %s", srv.ListenPort)
+	// Initialize logger early to use for startup messages
+	logLevel := srv.LogLevel
+	if logLevel == "" {
+		logLevel = "info" // default
+	}
+	InitLogger(logLevel)
+
+	logger.Info("[*] Starting SSH-to-SOCKS5 tunnel server (version: %s)", version)
+	logger.Info("[*] Log level              : %s", logLevel)
+	logger.Info("[*] Listening on port      : %s", srv.ListenPort)
 
 	// Log SOCKS5 proxy configuration
 	if len(srv.SocksList) > 0 {
-		log.Printf("[*] SOCKS5 proxy pool      : %d proxies", len(srv.SocksList))
+		logger.Info("[*] SOCKS5 proxy pool      : %d proxies", len(srv.SocksList))
 		for i, proxy := range srv.SocksList {
 			authStatus := "no auth"
 			if proxy.Username != "" {
 				authStatus = fmt.Sprintf("auth: %s", proxy.Username)
 			}
-			log.Printf("[*]   %d. %s (%s)", i+1, proxy.Address, authStatus)
+			logger.Info("[*]   %d. %s (%s)", i+1, proxy.Address, authStatus)
 		}
 	} else {
-		log.Printf("[*] Upstream SOCKS5 proxy  : %s (legacy mode)", srv.Socks5Address)
+		logger.Info("[*] Upstream SOCKS5 proxy  : %s (legacy mode)", srv.Socks5Address)
 	}
 
 	// Log configured users
 	if len(srv.Users) > 0 {
-		log.Printf("[*] Configured users       : %d", len(srv.Users))
+		logger.Info("[*] Configured users       : %d", len(srv.Users))
 		for i, user := range srv.Users {
-			log.Printf("[*]   %d. %s", i+1, user.Username)
+			logger.Info("[*]   %d. %s", i+1, user.Username)
 		}
 	} else {
-		log.Printf("[*] Allowed user           : %s", srv.Username)
+		logger.Info("[*] Allowed user           : %s", srv.Username)
 	}
 
 	if err := srv.ListenAndServe(); err != nil {

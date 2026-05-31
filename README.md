@@ -85,6 +85,9 @@ host_key:
 # single SOCKS5 proxy (deprecated - use 'socks_list' instead)
 # socks5_address: 192.168.10.10:1080
 
+# Log level: debug, info, warn, error, silent (default: info)
+log_level: info
+
 # Multiple SOCKS5 proxy configurations with round-robin and circuit breaker
 socks_list:
   - address: 192.168.10.201:7000

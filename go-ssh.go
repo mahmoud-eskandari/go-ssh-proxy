@@ -11,12 +11,94 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// LogLevel represents logging verbosity level.
+type LogLevel int
+
+const (
+	LogLevelSilent LogLevel = iota
+	LogLevelError
+	LogLevelWarn
+	LogLevelInfo
+	LogLevelDebug
+)
+
+// Logger wraps standard log with level filtering.
+type Logger struct {
+	level LogLevel
+}
+
+var logger *Logger
+
+// InitLogger initializes the global logger with specified level.
+func InitLogger(level string) {
+	var logLevel LogLevel
+	switch strings.ToLower(level) {
+	case "debug":
+		logLevel = LogLevelDebug
+	case "info":
+		logLevel = LogLevelInfo
+	case "warn", "warning":
+		logLevel = LogLevelWarn
+	case "error":
+		logLevel = LogLevelError
+	case "silent", "none":
+		logLevel = LogLevelSilent
+	default:
+		logLevel = LogLevelInfo
+	}
+	logger = &Logger{level: logLevel}
+}
+
+// Debug logs debug-level messages.
+func (l *Logger) Debug(format string, v ...interface{}) {
+	if l.level >= LogLevelDebug {
+		log.Printf(format, v...)
+	}
+}
+
+// Info logs info-level messages.
+func (l *Logger) Info(format string, v ...interface{}) {
+	if l.level >= LogLevelInfo {
+		log.Printf(format, v...)
+	}
+}
+
+// Warn logs warning-level messages.
+func (l *Logger) Warn(format string, v ...interface{}) {
+	if l.level >= LogLevelWarn {
+		log.Printf(format, v...)
+	}
+}
+
+// Error logs error-level messages.
+func (l *Logger) Error(format string, v ...interface{}) {
+	if l.level >= LogLevelError {
+		log.Printf(format, v...)
+	}
+}
+
+// Fatal logs fatal error and exits (always shown).
+func (l *Logger) Fatal(v ...interface{}) {
+	log.Fatal(v...)
+}
+
+// Fatalf logs fatal error with format and exits (always shown).
+func (l *Logger) Fatalf(format string, v ...interface{}) {
+	log.Fatalf(format, v...)
+}
+
+// Printf is a convenience method that logs at info level.
+func (l *Logger) Printf(format string, v ...interface{}) {
+	l.Info(format, v...)
+}
 
 // User represents a single user configuration.
 type User struct {
@@ -46,6 +128,7 @@ type Server struct {
 	Password      string       `yaml:"password"`       // Deprecated: use Users instead
 	Users         []User       `yaml:"users"`          // Multiple user configurations
 	HostKey       string       `yaml:"host_key"`       // Base64-encoded ECDSA private key (DER format)
+	LogLevel      string       `yaml:"log_level"`      // Log level: debug, info, warn, error, silent
 
 	// Bandwidth tracking
 	statsLock sync.RWMutex
@@ -101,7 +184,7 @@ func (p *SocksProxyPool) GetNextProxy() (*SocksProxy, int, error) {
 			if now.Sub(state.failedAt) >= circuitBreakerDuration {
 				// Reset circuit breaker
 				state.isBroken = false
-				log.Printf("[*] Circuit breaker reset for proxy %s", p.proxies[idx].Address)
+				logger.Info("[*] Circuit breaker reset for proxy %s", p.proxies[idx].Address)
 			} else {
 				// Still in circuit breaker, skip this proxy
 				continue
@@ -128,7 +211,7 @@ func (p *SocksProxyPool) MarkProxyFailed(proxyIndex int) {
 		isBroken: true,
 	}
 
-	log.Printf("[!] Proxy %s marked as failed — circuit breaker activated for 1 minutes",
+	logger.Warn("[!] Proxy %s marked as failed — circuit breaker activated for 1 minutes",
 		p.proxies[proxyIndex].Address)
 }
 
@@ -140,12 +223,12 @@ func (s *Server) ListenAndServe() error {
 	// Initialize SOCKS5 proxy pool
 	if len(s.SocksList) > 0 {
 		s.proxyPool = NewSocksProxyPool(s.SocksList)
-		log.Printf("[*] Initialized SOCKS5 proxy pool with %d proxies", len(s.SocksList))
+		logger.Info("[*] Initialized SOCKS5 proxy pool with %d proxies", len(s.SocksList))
 	} else if s.Socks5Address != "" {
 		// Backward compatibility: convert single proxy to list
 		s.SocksList = []SocksProxy{{Address: s.Socks5Address}}
 		s.proxyPool = NewSocksProxyPool(s.SocksList)
-		log.Printf("[*] Using legacy single SOCKS5 proxy: %s", s.Socks5Address)
+		logger.Info("[*] Using legacy single SOCKS5 proxy: %s", s.Socks5Address)
 	}
 
 	config, err := s.buildSSHConfig()
@@ -162,12 +245,12 @@ func (s *Server) ListenAndServe() error {
 	// Start statistics printer goroutine
 	go s.printStatsPeriodically()
 
-	log.Printf("[*] Server ready — waiting for SSH clients...")
+	logger.Info("[*] Server ready — waiting for SSH clients...")
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("[!] Accept error: %v", err)
+			logger.Error("[!] Accept error: %v", err)
 			continue
 		}
 		go s.handleConn(conn, config)
@@ -185,7 +268,7 @@ func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 			if len(s.Users) > 0 {
 				for _, user := range s.Users {
 					if user.Username == username && user.Password == password {
-						log.Printf("[+] Auth OK  — user=%q from %s", username, c.RemoteAddr())
+						logger.Info("[+] Auth OK  — user=%q from %s", username, c.RemoteAddr())
 
 						// Initialize stats for this user if not exists
 						s.statsLock.Lock()
@@ -206,7 +289,7 @@ func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 
 			// Fallback to single user config (for backward compatibility)
 			if s.Username != "" && username == s.Username && password == s.Password {
-				log.Printf("[+] Auth OK  — user=%q from %s", username, c.RemoteAddr())
+				logger.Info("[+] Auth OK  — user=%q from %s", username, c.RemoteAddr())
 
 				s.statsLock.Lock()
 				if _, exists := s.stats[username]; !exists {
@@ -221,7 +304,7 @@ func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 				}, nil
 			}
 
-			log.Printf("[-] Auth FAIL — user=%q from %s", username, c.RemoteAddr())
+			logger.Warn("[-] Auth FAIL — user=%q from %s", username, c.RemoteAddr())
 			return nil, fmt.Errorf("invalid credentials")
 		},
 		// Reject public-key auth so only password is accepted
@@ -237,7 +320,7 @@ func (s *Server) buildSSHConfig() (*ssh.ServerConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load host key from config: %w", err)
 		}
-		log.Printf("[*] Loaded host key from config")
+		logger.Info("[*] Loaded host key from config")
 	} else {
 		// Generate a new ECDSA host key
 		privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -293,11 +376,11 @@ func (s *Server) handleConn(tcpConn net.Conn, config *ssh.ServerConfig) {
 
 	sshConn, chans, reqs, err := ssh.NewServerConn(tcpConn, config)
 	if err != nil {
-		log.Printf("[!] SSH handshake failed from %s: %v", tcpConn.RemoteAddr(), err)
+		logger.Debug("[!] SSH handshake failed from %s: %v", tcpConn.RemoteAddr(), err)
 		return
 	}
 	defer sshConn.Close()
-	log.Printf("[+] New SSH session — user=%q addr=%s", sshConn.User(), sshConn.RemoteAddr())
+	logger.Info("[+] New SSH session — user=%q addr=%s", sshConn.User(), sshConn.RemoteAddr())
 
 	// Discard global requests (keepalive, etc.)
 	go ssh.DiscardRequests(reqs)
@@ -317,7 +400,7 @@ func (s *Server) handleConn(tcpConn net.Conn, config *ssh.ServerConfig) {
 			// Some SSH clients open a session channel during -D; accept and do nothing
 			ch, reqs2, err := newChan.Accept()
 			if err != nil {
-				log.Printf("[!] Accept session channel: %v", err)
+				logger.Error("[!] Accept session channel: %v", err)
 				continue
 			}
 			go func() {
@@ -340,12 +423,12 @@ func (s *Server) handleConn(tcpConn net.Conn, config *ssh.ServerConfig) {
 			}()
 
 		default:
-			log.Printf("[~] Rejecting unknown channel type: %s", newChan.ChannelType())
+			logger.Debug("[~] Rejecting unknown channel type: %s", newChan.ChannelType())
 			_ = newChan.Reject(ssh.UnknownChannelType, "unsupported channel type")
 		}
 	}
 
-	log.Printf("[*] SSH session closed — addr=%s", sshConn.RemoteAddr())
+	logger.Info("[*] SSH session closed — addr=%s", sshConn.RemoteAddr())
 }
 
 // directTCPIPPayload matches the RFC 4254 §7.2 direct-tcpip payload.
@@ -399,7 +482,7 @@ func isInternalAddress(addr string) bool {
 func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
 	var payload directTCPIPPayload
 	if err := ssh.Unmarshal(newChan.ExtraData(), &payload); err != nil {
-		log.Printf("[!] Parse direct-tcpip payload: %v", err)
+		logger.Error("[!] Parse direct-tcpip payload: %v", err)
 		_ = newChan.Reject(ssh.ConnectionFailed, "bad payload")
 		return
 	}
@@ -407,26 +490,40 @@ func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
 	target := fmt.Sprintf("%s:%d", payload.DestAddr, payload.DestPort)
 
 	// Prevent connections to internal/private IPs and localhost
+	// Accept the channel but don't relay - just keep it open with empty ACK
 	if isInternalAddress(payload.DestAddr) {
-		log.Printf("[!] Blocked internal address request: user=%s target=%s", username, target)
-		_ = newChan.Reject(ssh.Prohibited, "connection to internal addresses is not allowed")
+		logger.Warn("[!] Blocked internal address request: user=%s target=%s", username, target)
+		
+		// Accept the channel to send OK response
+		ch, reqs, err := newChan.Accept()
+		if err != nil {
+			logger.Error("[!] Accept channel for internal address block: %v", err)
+			return
+		}
+		defer ch.Close()
+		
+		// Discard any requests and data - don't relay anything
+		go ssh.DiscardRequests(reqs)
+		
+		// Keep channel open but discard all data from client
+		io.Copy(io.Discard, ch)
 		return
 	}
 
 	// Get next available proxy from pool
 	proxy, proxyIndex, err := s.proxyPool.GetNextProxy()
 	if err != nil {
-		log.Printf("[!] No available SOCKS5 proxy: %v", err)
+		logger.Error("[!] No available SOCKS5 proxy: %v", err)
 		_ = newChan.Reject(ssh.ConnectionFailed, err.Error())
 		return
 	}
 
-	//log.Printf("[>] Forwarding  %s → SOCKS5(%s) → %s", newChan.ChannelType(), proxy.Address, target)
+	logger.Debug("[>] Forwarding  %s → SOCKS5(%s) → %s", newChan.ChannelType(), proxy.Address, target)
 
 	// Connect to the upstream SOCKS5 proxy and ask it to reach the real target
 	upstreamConn, err := dialViaSocks5(proxy, payload.DestAddr, uint16(payload.DestPort))
 	if err != nil {
-		log.Printf("[!] SOCKS5 connect to %s via %s failed: %v", target, proxy.Address, err)
+		logger.Error("[!] SOCKS5 connect to %s via %s failed: %v", target, proxy.Address, err)
 
 		// Mark this proxy as failed (activate circuit breaker)
 		s.proxyPool.MarkProxyFailed(proxyIndex)
@@ -439,7 +536,7 @@ func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
 	// Accept the SSH channel now that we have the upstream connection
 	ch, reqs, err := newChan.Accept()
 	if err != nil {
-		log.Printf("[!] Accept direct-tcpip channel: %v", err)
+		logger.Error("[!] Accept direct-tcpip channel: %v", err)
 		return
 	}
 	defer ch.Close()
@@ -471,7 +568,7 @@ func (s *Server) handleDirectTCPIP(newChan ssh.NewChannel, username string) {
 	<-done
 }
 
-// printStatsPeriodically prints bandwidth statistics for each user every minute.
+// printStatsPeriodically prints bandwidth statistics for each user every 5 minutes.
 func (s *Server) printStatsPeriodically() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -484,17 +581,17 @@ func (s *Server) printStatsPeriodically() {
 			continue
 		}
 
-		log.Printf("========== Bandwidth Statistics ==========")
+		logger.Info("========== Bandwidth Statistics ==========")
 		for username, stats := range s.stats {
 			tx := atomic.LoadUint64(&stats.TxBytes)
 			rx := atomic.LoadUint64(&stats.RxBytes)
 
-			log.Printf("User: %s | TX: %s | RX: %s",
+			logger.Info("User: %s | TX: %s | RX: %s",
 				username,
 				formatBytes(tx),
 				formatBytes(rx))
 		}
-		log.Printf("==========================================")
+		logger.Info("==========================================")
 
 		s.statsLock.RUnlock()
 	}

@@ -1,5 +1,13 @@
 listen_port: 2222
 
+# Log level: Controls logging verbosity
+#   debug  - All messages including forwarding details
+#   info   - Normal operational messages (default)
+#   warn   - Warnings and errors only
+#   error  - Only error messages
+#   silent - No logs (except fatal errors)
+log_level: info
+
 host_key: 
 
 # single SOCKS5 proxy (deprecated - use 'socks_list' instead)
